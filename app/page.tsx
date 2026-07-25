@@ -8,8 +8,14 @@ import { Spade, ArrowRight, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { createGame, getGameByCode } from "@/lib/supabase";
+import { createGame, addPlayer, getGameByCode } from "@/lib/supabase";
 import { generateGameCode } from "@/lib/utils";
+import { saveAdminToken, savePlayerId } from "@/lib/identity";
+
+const PLAYER_COLORS = [
+  "#6366f1", "#ec4899", "#f59e0b", "#10b981",
+  "#3b82f6", "#8b5cf6", "#ef4444", "#14b8a6",
+];
 
 export default function HomePage() {
   const router = useRouter();
@@ -17,6 +23,7 @@ export default function HomePage() {
 
   // Create game form
   const [gameName, setGameName] = useState("");
+  const [adminName, setAdminName] = useState("");
   const [chipsPerRupee, setChipsPerRupee] = useState("1");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
@@ -28,17 +35,27 @@ export default function HomePage() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!gameName.trim()) return;
+    if (!gameName.trim() || !adminName.trim()) return;
     setCreating(true);
     setCreateError("");
     try {
       const rate = parseFloat(chipsPerRupee);
       if (isNaN(rate) || rate <= 0) throw new Error("Invalid chips per rupee");
+
       const code = generateGameCode();
       const game = await createGame(gameName.trim(), rate, code);
+
+      // Save admin token so this browser is recognised as the admin
+      saveAdminToken(game.code, game.admin_token);
+
+      // Create admin as the first player
+      const color = PLAYER_COLORS[0];
+      const player = await addPlayer(game.id, adminName.trim(), color);
+      savePlayerId(game.code, player.id);
+
       router.push(`/game/${game.code}`);
     } catch (err: unknown) {
-      setCreateError(err instanceof Error ? err.message : "Failed to create game. Check your connection.");
+      setCreateError(err instanceof Error ? err.message : "Failed to create game.");
     } finally {
       setCreating(false);
     }
@@ -115,6 +132,17 @@ export default function HomePage() {
               </div>
 
               <div className="space-y-1.5">
+                <Label htmlFor="admin-name">Your Name</Label>
+                <Input
+                  id="admin-name"
+                  placeholder="e.g. Rahul"
+                  value={adminName}
+                  onChange={(e) => setAdminName(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="space-y-1.5">
                 <Label htmlFor="chips-per-rupee">Chips per ₹1</Label>
                 <Input
                   id="chips-per-rupee"
@@ -164,6 +192,10 @@ export default function HomePage() {
                 {joining ? "Finding…" : "Join Game"}
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
+
+              <p className="text-xs text-zinc-500 text-center">
+                You&apos;ll be asked for your name when you arrive.
+              </p>
             </form>
           )}
         </div>

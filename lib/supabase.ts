@@ -33,6 +33,7 @@ export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
 
 export type GameStatus = "active" | "ended";
 export type TransactionType = "buyin" | "cashout";
+export type PendingStatus = "pending" | "approved" | "denied";
 
 export interface Game {
   id: string;
@@ -40,6 +41,7 @@ export interface Game {
   name: string;
   chips_per_rupee: number;
   status: GameStatus;
+  admin_token: string;
   created_at: string;
 }
 
@@ -62,7 +64,19 @@ export interface Transaction {
   player?: Player;
 }
 
-// ─── Queries ─────────────────────────────────────────────────────────────────
+export interface PendingTransaction {
+  id: string;
+  game_id: string;
+  player_id: string;
+  type: TransactionType;
+  chips: number;
+  note: string | null;
+  status: PendingStatus;
+  created_at: string;
+  player?: Player;
+}
+
+// ─── Game queries ─────────────────────────────────────────────────────────────
 
 export async function getGameByCode(code: string): Promise<Game | null> {
   const { data, error } = await supabase
@@ -99,6 +113,8 @@ export async function endGame(gameId: string): Promise<void> {
   if (error) throw error;
 }
 
+// ─── Player queries ───────────────────────────────────────────────────────────
+
 export async function getPlayers(gameId: string): Promise<Player[]> {
   const { data, error } = await supabase
     .from("players")
@@ -124,6 +140,8 @@ export async function addPlayer(
   if (error) throw error;
   return data;
 }
+
+// ─── Transaction queries ──────────────────────────────────────────────────────
 
 export async function getTransactions(gameId: string): Promise<Transaction[]> {
   const { data, error } = await supabase
@@ -151,4 +169,74 @@ export async function addTransaction(
 
   if (error) throw error;
   return data;
+}
+
+export async function deleteTransaction(transactionId: string): Promise<void> {
+  const { error } = await supabase
+    .from("transactions")
+    .delete()
+    .eq("id", transactionId);
+
+  if (error) throw error;
+}
+
+// ─── Pending transaction queries ──────────────────────────────────────────────
+
+export async function getPendingTransactions(gameId: string): Promise<PendingTransaction[]> {
+  const { data, error } = await supabase
+    .from("pending_transactions")
+    .select("*, player:players(*)")
+    .eq("game_id", gameId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: true });
+
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function createPendingTransaction(
+  gameId: string,
+  playerId: string,
+  type: TransactionType,
+  chips: number,
+  note?: string
+): Promise<PendingTransaction> {
+  const { data, error } = await supabase
+    .from("pending_transactions")
+    .insert({ game_id: gameId, player_id: playerId, type, chips, note: note ?? null })
+    .select("*, player:players(*)")
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function approvePendingTransaction(
+  pendingId: string,
+  gameId: string,
+  playerId: string,
+  type: TransactionType,
+  chips: number,
+  note: string | null
+): Promise<void> {
+  // Insert the real transaction
+  const { error: txError } = await supabase
+    .from("transactions")
+    .insert({ game_id: gameId, player_id: playerId, type, chips, note });
+  if (txError) throw txError;
+
+  // Mark pending as approved
+  const { error: pendingError } = await supabase
+    .from("pending_transactions")
+    .update({ status: "approved" })
+    .eq("id", pendingId);
+  if (pendingError) throw pendingError;
+}
+
+export async function denyPendingTransaction(pendingId: string): Promise<void> {
+  const { error } = await supabase
+    .from("pending_transactions")
+    .update({ status: "denied" })
+    .eq("id", pendingId);
+  if (error) throw error;
 }
