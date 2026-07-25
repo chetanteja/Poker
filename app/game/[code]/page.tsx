@@ -10,7 +10,7 @@ import {
   X as XIcon, BarChart2, TrendingUp, TrendingDown, Minus,
 } from "lucide-react";
 import {
-  LineChart, Line, XAxis, YAxis, Tooltip, Legend,
+  AreaChart, Area, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid,
 } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,7 @@ import {
   type PendingTransaction,
 } from "@/lib/supabase";
 import {
-  computePlayerBalances, checkIntegrity, computeChartData,
+  computePlayerBalances, checkIntegrity,
   type PlayerBalance,
 } from "@/lib/accounting";
 import { getAdminToken, savePlayerId, getPlayerId } from "@/lib/identity";
@@ -172,7 +172,6 @@ export default function GamePage() {
 
   const playerBalances = computePlayerBalances(players, transactions);
   const integrity = checkIntegrity(playerBalances, transactions);
-  const chartData = computeChartData(players, transactions);
   const myPendingTxns = pendingTxns.filter((pt) => pt.player_id === currentPlayerId);
 
   // ─── Handlers ────────────────────────────────────────────────────────────────
@@ -498,7 +497,7 @@ export default function GamePage() {
           />
         )}
         {activeTab === "stats" && (
-          <StatsTab players={players} chartData={chartData} playerBalances={playerBalances} chipRatio={game.chips_per_rupee} />
+          <StatsTab players={players} transactions={transactions} playerBalances={playerBalances} chipRatio={game.chips_per_rupee} />
         )}
         {activeTab === "log" && (
           <LogTab
@@ -753,81 +752,185 @@ function PlayerCard({ pb, suit, chipsPerRupee, isAdmin, isOwnCard, gameActive, o
   );
 }
 
-// ─── Stats Tab ────────────────────────────────────────────────────────────────
+// ─── Stats Tab (per-player) ───────────────────────────────────────────────────
 
-function StatsTab({ players, chartData, playerBalances, chipRatio }: {
+function StatsTab({ players, transactions, playerBalances, chipRatio }: {
   players: Player[];
-  chartData: ReturnType<typeof computeChartData>;
+  transactions: Transaction[];
   playerBalances: PlayerBalance[];
   chipRatio: number;
 }) {
-  if (chartData.length === 0) {
+  const [selectedId, setSelectedId] = useState(players[0]?.id ?? "");
+
+  const player = players.find((p) => p.id === selectedId);
+  const pb = playerBalances.find((b) => b.player.id === selectedId);
+  const suitIdx = players.findIndex((p) => p.id === selectedId);
+  const suit = SUITS[suitIdx % 4];
+  const sRed = isSuitRed(suit);
+
+  const playerTxns = transactions
+    .filter((t) => t.player_id === selectedId)
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  // Build running balance chart data
+  let running = 0;
+  const chartData: { label: string; balance: number }[] = [{ label: "Start", balance: 0 }];
+  playerTxns.forEach((tx) => {
+    running += tx.type === "cashout" ? Number(tx.chips) : -Number(tx.chips);
+    chartData.push({ label: tx.created_at.slice(11, 16), balance: running });
+  });
+
+  const allBalances = chartData.map((d) => d.balance);
+  const peak    = Math.max(0, ...allBalances);
+  const trough  = Math.min(0, ...allBalances);
+  const buyinTxns   = playerTxns.filter((t) => t.type === "buyin");
+  const cashoutTxns = playerTxns.filter((t) => t.type === "cashout");
+  const biggestBuyin   = buyinTxns.reduce((m, t) => Math.max(m, Number(t.chips)), 0);
+  const biggestCashout = cashoutTxns.reduce((m, t) => Math.max(m, Number(t.chips)), 0);
+  const isWinning = (pb?.netChips ?? 0) > 0;
+  const gradId = `grad-${selectedId}`;
+
+  if (players.length === 0) {
     return (
       <div className="text-center py-16 text-white/30">
         <BarChart2 className="w-10 h-10 mx-auto mb-3 opacity-30" />
-        <p className="text-sm">Stats appear once transactions are logged.</p>
+        <p className="text-sm">Add players to see stats.</p>
       </div>
     );
   }
 
-  const sorted = [...playerBalances].sort((a, b) => b.netChips - a.netChips);
-
   return (
     <div className="space-y-4">
-      {/* Line chart */}
-      <div className="bg-black/30 backdrop-blur-sm rounded-2xl border border-white/10 p-4">
-        <p className="text-xs text-white/40 uppercase tracking-wider font-medium mb-3">Chip Balance Over Time</p>
-        <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-            <XAxis dataKey="time" tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 10 }} tickLine={false} />
-            <YAxis tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 10 }} tickLine={false} axisLine={false} />
-            <Tooltip
-              contentStyle={{ backgroundColor: "#0f2d1a", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "10px" }}
-              labelStyle={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}
-              itemStyle={{ fontSize: 12 }}
-            />
-            <ReferenceLine y={0} stroke="rgba(255,255,255,0.15)" strokeDasharray="4 4" />
-            <Legend wrapperStyle={{ fontSize: 12, color: "rgba(255,255,255,0.5)", paddingTop: 8 }} />
-            {players.map((p) => (
-              <Line key={p.id} type="stepAfter" dataKey={p.name}
-                stroke={p.color} strokeWidth={2.5}
-                dot={{ r: 3, fill: p.color, strokeWidth: 0 }}
-                activeDot={{ r: 5, strokeWidth: 0 }}
-              />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Leaderboard */}
-      <div className="bg-black/30 backdrop-blur-sm rounded-2xl border border-white/10 overflow-hidden">
-        <p className="text-xs text-white/40 uppercase tracking-wider font-medium px-4 pt-4 pb-2">Leaderboard</p>
-        {sorted.map((pb, i) => {
-          const suitIdx = players.findIndex((p) => p.id === pb.player.id);
-          const suit = SUITS[suitIdx % 4];
-          const sRed = isSuitRed(suit);
-          const isWinner = pb.netChips > 0;
-          const isLoser = pb.netChips < 0;
+      {/* Player selector */}
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {players.map((p, i) => {
+          const s = SUITS[i % 4];
+          const sr = isSuitRed(s);
+          const isSel = p.id === selectedId;
           return (
-            <div key={pb.player.id} className="flex items-center px-4 py-3 border-t border-white/5 first:border-0">
-              <span className="text-white/20 text-sm font-mono w-5 shrink-0">{i + 1}</span>
-              <span className={cn("text-xl mx-3 shrink-0", sRed ? "text-red-400" : "text-white")}>{suit}</span>
-              <span className="font-medium text-white flex-1">{pb.player.name}</span>
-              <div className="text-right">
-                <p className={cn("font-bold", isWinner ? "text-emerald-400" : isLoser ? "text-red-400" : "text-white/40")}>
-                  {pb.netChips >= 0 ? "+" : ""}{formatChips(pb.netChips)}
-                </p>
-                {chipRatio > 0 && (
-                  <p className={cn("text-xs", isWinner ? "text-emerald-600" : isLoser ? "text-red-600" : "text-white/20")}>
-                    {pb.netChips >= 0 ? "+" : ""}₹{Math.abs(pb.netChips * chipRatio).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-                  </p>
-                )}
-              </div>
-            </div>
+            <button key={p.id} onClick={() => setSelectedId(p.id)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all shrink-0",
+                isSel
+                  ? "bg-white text-zinc-900 shadow-lg scale-105"
+                  : "bg-black/25 text-white/50 hover:text-white/80 border border-white/10"
+              )}>
+              <span className={cn("text-sm", sr ? (isSel ? "text-red-500" : "text-red-400") : (isSel ? "text-zinc-700" : "text-white/50"))}>
+                {s}
+              </span>
+              {p.name}
+            </button>
           );
         })}
       </div>
+
+      {!player || !pb ? null : playerTxns.length === 0 ? (
+        <div className="text-center py-12 text-white/30 bg-black/20 rounded-2xl border border-white/8">
+          <p className="text-sm">No transactions yet for {player.name}.</p>
+        </div>
+      ) : (
+        <>
+          {/* Area chart */}
+          <div className="bg-black/30 backdrop-blur-sm rounded-2xl border border-white/10 p-4">
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                <span className={cn("text-2xl", sRed ? "text-red-400" : "text-white/80")}>{suit}</span>
+                <p className="text-sm font-semibold text-white">{player.name}</p>
+              </div>
+              <span className={cn("text-lg font-bold",
+                isWinning ? "text-emerald-400" : pb.netChips < 0 ? "text-red-400" : "text-white/40"
+              )}>
+                {pb.netChips >= 0 ? "+" : ""}{formatChips(pb.netChips)}
+                {chipRatio > 0 && (
+                  <span className="text-xs font-normal ml-1 opacity-60">
+                    (₹{Math.abs(pb.netChips * chipRatio).toLocaleString("en-IN", { maximumFractionDigits: 0 })})
+                  </span>
+                )}
+              </span>
+            </div>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={chartData} margin={{ top: 10, right: 5, left: -22, bottom: 0 }}>
+                <defs>
+                  <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor={isWinning ? "#10b981" : "#ef4444"} stopOpacity={0.45} />
+                    <stop offset="95%" stopColor={isWinning ? "#10b981" : "#ef4444"} stopOpacity={0.03} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <XAxis dataKey="label" tick={{ fill: "rgba(255,255,255,0.22)", fontSize: 10 }} tickLine={false} axisLine={false} />
+                <YAxis tick={{ fill: "rgba(255,255,255,0.22)", fontSize: 10 }} tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: "#071e0f", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "10px", padding: "8px 12px" }}
+                  labelStyle={{ color: "rgba(255,255,255,0.35)", fontSize: 10 }}
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  formatter={(v: any) => {
+                    const n = Number(v ?? 0);
+                    return [`${n >= 0 ? "+" : ""}${formatChips(n)}`, "Balance"];
+                  }}
+                />
+                <ReferenceLine y={0} stroke="rgba(255,255,255,0.18)" strokeDasharray="5 4" />
+                <Area
+                  type="monotone"
+                  dataKey="balance"
+                  stroke={isWinning ? "#10b981" : "#ef4444"}
+                  strokeWidth={2.5}
+                  fill={`url(#${gradId})`}
+                  dot={{ r: 4.5, fill: isWinning ? "#10b981" : "#ef4444", strokeWidth: 2, stroke: "#071e0f" }}
+                  activeDot={{ r: 6.5, strokeWidth: 0, fill: isWinning ? "#34d399" : "#f87171" }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Stats grid */}
+          <div className="grid grid-cols-2 gap-2">
+            <StatBox label="Peak Balance" value={`+${formatChips(peak)}`} sub={chipRatio > 0 ? `+₹${(peak * chipRatio).toFixed(0)}` : undefined} color="emerald" />
+            <StatBox label="Lowest Point" value={formatChips(trough)} sub={chipRatio > 0 ? `₹${(trough * chipRatio).toFixed(0)}` : undefined} color={trough < 0 ? "red" : "zinc"} />
+            <StatBox
+              label={`Buyins · ${buyinTxns.length}×`}
+              value={formatChips(pb.totalBuyins)}
+              sub={chipRatio > 0 ? `₹${(pb.totalBuyins * chipRatio).toFixed(0)}` : undefined}
+              color="red"
+            />
+            <StatBox
+              label={`Cashouts · ${cashoutTxns.length}×`}
+              value={formatChips(pb.totalCashouts)}
+              sub={chipRatio > 0 ? `₹${(pb.totalCashouts * chipRatio).toFixed(0)}` : undefined}
+              color="emerald"
+            />
+            {biggestBuyin > 0 && (
+              <StatBox label="Biggest Buyin" value={formatChips(biggestBuyin)} color="red" />
+            )}
+            {biggestCashout > 0 && (
+              <StatBox label="Biggest Cashout" value={formatChips(biggestCashout)} color="emerald" />
+            )}
+            <StatBox
+              label="Total Transactions"
+              value={String(playerTxns.length)}
+              color="zinc"
+            />
+            <StatBox
+              label="Net Position"
+              value={`${pb.netChips >= 0 ? "+" : ""}${formatChips(pb.netChips)}`}
+              color={isWinning ? "emerald" : pb.netChips < 0 ? "red" : "zinc"}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function StatBox({ label, value, sub, color }: {
+  label: string; value: string; sub?: string;
+  color: "emerald" | "red" | "zinc";
+}) {
+  const clr = { emerald: "text-emerald-400", red: "text-red-400", zinc: "text-white/40" }[color];
+  return (
+    <div className="bg-black/25 rounded-xl border border-white/8 p-3 backdrop-blur-sm">
+      <p className="text-xs text-white/30 mb-1">{label}</p>
+      <p className={cn("text-lg font-bold leading-tight", clr)}>{value}</p>
+      {sub && <p className={cn("text-xs mt-0.5 opacity-60", clr)}>{sub}</p>}
     </div>
   );
 }
