@@ -12,22 +12,12 @@
   }
 
   body {
-    /* Poker table felt — central lamp glow with dark border */
     background-color: #0d4a24;
-    background-image:
-      radial-gradient(ellipse 80% 60% at 50% 40%, #1e7a45 0%, #0f5c2d 45%, #073319 100%),
-      /* diagonal felt weave */
-      repeating-linear-gradient(
-        45deg,
-        transparent 0px, transparent 3px,
-        rgba(0,0,0,0.04) 3px, rgba(0,0,0,0.04) 4px
-      ),
-      repeating-linear-gradient(
-        -45deg,
-        transparent 0px, transparent 3px,
-        rgba(0,0,0,0.025) 3px, rgba(0,0,0,0.025) 4px
-      );
+    background-image: url("/poker-bg.jpg");
+    background-size: cover;
+    background-position: center;
     background-attachment: fixed;
+    background-repeat: no-repeat;
     min-height: 100vh;
     color: white;
     -webkit-font-smoothing: antialiased;
