@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   Plus, TrendingUp, TrendingDown, AlertTriangle, CheckCircle2,
@@ -59,21 +59,29 @@ export default function GamePage() {
   const [txNote, setTxNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
+  const [updateFlash, setUpdateFlash] = useState(false);
+  const txCountRef = useRef(0);
 
   // ─── Load data ───────────────────────────────────────────────────────────────
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (silent = false) => {
     try {
       const g = await getGameByCode(code);
       if (!g) { setError("Game not found."); setLoading(false); return; }
       const [p, t] = await Promise.all([getPlayers(g.id), getTransactions(g.id)]);
       setGame(g);
       setPlayers(p);
+      // Flash notification if new transactions came in silently
+      if (silent && t.length > txCountRef.current) {
+        setUpdateFlash(true);
+        setTimeout(() => setUpdateFlash(false), 2500);
+      }
+      txCountRef.current = t.length;
       setTransactions(t);
     } catch {
-      setError("Failed to load game.");
+      if (!silent) setError("Failed to load game.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [code]);
 
@@ -92,7 +100,10 @@ export default function GamePage() {
         table: "players",
         filter: `game_id=eq.${game.id}`,
       }, (payload) => {
-        setPlayers((prev) => [...prev, payload.new as Player]);
+        setPlayers((prev) => {
+          if (prev.find((p) => p.id === (payload.new as Player).id)) return prev;
+          return [...prev, payload.new as Player];
+        });
       })
       .on("postgres_changes", {
         event: "INSERT",
@@ -100,8 +111,12 @@ export default function GamePage() {
         table: "transactions",
         filter: `game_id=eq.${game.id}`,
       }, async () => {
-        // Reload transactions to get the joined player data
         const t = await getTransactions(game.id);
+        if (t.length > txCountRef.current) {
+          setUpdateFlash(true);
+          setTimeout(() => setUpdateFlash(false), 2500);
+        }
+        txCountRef.current = t.length;
         setTransactions(t);
       })
       .on("postgres_changes", {
@@ -116,6 +131,15 @@ export default function GamePage() {
 
     return () => { supabase.removeChannel(channel); };
   }, [game]);
+
+  // ─── Polling fallback (every 10s) ────────────────────────────────────────────
+  // Catches updates if the WebSocket connection is unavailable.
+
+  useEffect(() => {
+    if (!game) return;
+    const interval = setInterval(() => loadData(true), 10000);
+    return () => clearInterval(interval);
+  }, [game, loadData]);
 
   // ─── Computed values ─────────────────────────────────────────────────────────
 
@@ -210,6 +234,14 @@ export default function GamePage() {
 
   return (
     <div className="min-h-screen flex flex-col max-w-2xl mx-auto">
+      {/* Live update flash */}
+      {updateFlash && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-indigo-600 text-white text-sm font-medium px-4 py-2 rounded-full shadow-lg animate-fade-in">
+          <RefreshCw className="w-3.5 h-3.5" />
+          Updated
+        </div>
+      )}
+
       {/* Header */}
       <header className="sticky top-0 z-10 bg-zinc-950/90 backdrop-blur border-b border-zinc-800 px-4 py-3">
         <div className="flex items-center justify-between">

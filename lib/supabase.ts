@@ -16,10 +16,16 @@ export function getClient(): SupabaseClient {
   return _client;
 }
 
-// Convenience proxy — use `supabase` directly in code; it is lazily initialized.
+// Convenience proxy — lazily initialized, methods are bound to the real client.
 export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
   get(_target, prop) {
-    return (getClient() as unknown as Record<string, unknown>)[prop as string];
+    const client = getClient();
+    const value = (client as unknown as Record<string, unknown>)[prop as string];
+    if (typeof value === "function") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (value as (...args: any[]) => unknown).bind(client);
+    }
+    return value;
   },
 });
 
