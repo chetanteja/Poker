@@ -24,7 +24,7 @@ export default function HomePage() {
   // Create game form
   const [gameName, setGameName] = useState("");
   const [adminName, setAdminName] = useState("");
-  const [chipsPerRupee, setChipsPerRupee] = useState("1");
+  const [chipRatio, setChipRatio] = useState("1");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
 
@@ -39,8 +39,8 @@ export default function HomePage() {
     setCreating(true);
     setCreateError("");
     try {
-      const rate = parseFloat(chipsPerRupee);
-      if (isNaN(rate) || rate <= 0) throw new Error("Invalid chips per rupee");
+      const rate = parseFloat(chipRatio);
+      if (isNaN(rate) || rate <= 0) throw new Error("Invalid ratio");
 
       const code = generateGameCode();
       const game = await createGame(gameName.trim(), rate, code);
@@ -143,19 +143,19 @@ export default function HomePage() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="chips-per-rupee">Chips per ₹1</Label>
+                <Label htmlFor="chip-ratio">₹ per chip (ratio)</Label>
                 <Input
-                  id="chips-per-rupee"
+                  id="chip-ratio"
                   type="number"
-                  placeholder="e.g. 10 (means ₹1 = 10 chips)"
-                  value={chipsPerRupee}
-                  onChange={(e) => setChipsPerRupee(e.target.value)}
-                  min="0.01"
+                  placeholder="e.g. 0.3 means 1 chip = ₹0.3"
+                  value={chipRatio}
+                  onChange={(e) => setChipRatio(e.target.value)}
+                  min="0.0001"
                   step="any"
                   required
                 />
                 <p className="text-xs text-zinc-500">
-                  Used to convert chips to ₹ in the final summary
+                  Money = chips × ratio. E.g. 1000 chips × 0.3 = ₹300
                 </p>
               </div>
 

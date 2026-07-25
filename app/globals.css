@@ -3,29 +3,44 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
-  }
-
   * {
-    @apply border-zinc-800;
+    @apply border-zinc-700/30;
   }
 
   body {
-    @apply bg-zinc-950 text-zinc-100 antialiased;
+    background-color: #14532d;
+    background-image:
+      radial-gradient(ellipse at 50% 0%, rgba(34, 197, 94, 0.15) 0%, transparent 60%),
+      radial-gradient(ellipse at 0% 100%, rgba(6, 78, 59, 0.4) 0%, transparent 50%),
+      radial-gradient(ellipse at 100% 50%, rgba(20, 83, 45, 0.3) 0%, transparent 50%),
+      repeating-linear-gradient(
+        45deg,
+        transparent 0px, transparent 8px,
+        rgba(0, 0, 0, 0.025) 8px, rgba(0, 0, 0, 0.025) 9px
+      );
+    background-attachment: fixed;
+    min-height: 100vh;
+    @apply text-white antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
 
 @layer utilities {
-  .chip-positive {
-    @apply text-emerald-400;
+  .felt-card {
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
   }
-  .chip-negative {
-    @apply text-red-400;
+
+  .playing-card {
+    background: linear-gradient(145deg, #ffffff 0%, #f5f0e8 100%);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.8);
   }
-  .chip-neutral {
-    @apply text-zinc-400;
-  }
+
+  .chip-positive { @apply text-emerald-400; }
+  .chip-negative { @apply text-red-400; }
+  .chip-neutral  { @apply text-zinc-400; }
+
+  .suit-red   { color: #dc2626; }
+  .suit-black { color: #1a1a2e; }
 }

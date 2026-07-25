@@ -1,4 +1,5 @@
 import type { Player, Transaction } from "./supabase";
+import { formatTime } from "./utils";
 
 // ─── Per-Player Balance ───────────────────────────────────────────────────────
 
@@ -6,9 +7,9 @@ export interface PlayerBalance {
   player: Player;
   totalBuyins: number;
   totalCashouts: number;
-  netChips: number; // positive = winner, negative = still owes chips
+  netChips: number;
   lastActionType: "buyin" | "cashout" | null;
-  hasPendingCashout: boolean; // last action was a buyin with no cashout after
+  hasPendingCashout: boolean;
 }
 
 export function computePlayerBalances(
@@ -30,11 +31,7 @@ export function computePlayerBalances(
 
     const lastTx = playerTxs[playerTxs.length - 1];
     const lastActionType = lastTx?.type ?? null;
-
-    // A player has a pending cashout if they have buyins and the last
-    // logged action is a buyin (i.e., no cashout has been logged since).
-    const hasPendingCashout =
-      totalBuyins > 0 && lastActionType === "buyin";
+    const hasPendingCashout = totalBuyins > 0 && lastActionType === "buyin";
 
     return {
       player,
@@ -52,9 +49,10 @@ export function computePlayerBalances(
 export interface IntegrityResult {
   totalBuyins: number;
   totalCashouts: number;
-  gap: number; // totalBuyins - totalCashouts (should be 0 at end of game)
+  chipsOnTable: number;  // totalBuyins - totalCashouts (chips not yet cashed out)
+  gap: number;
   isBalanced: boolean;
-  suspectPlayers: PlayerBalance[]; // players whose last action is buyin
+  suspectPlayers: PlayerBalance[];
 }
 
 export function checkIntegrity(
@@ -74,6 +72,7 @@ export function checkIntegrity(
   return {
     totalBuyins,
     totalCashouts,
+    chipsOnTable: gap,
     gap,
     isBalanced: gap === 0,
     suspectPlayers: playerBalances.filter((pb) => pb.hasPendingCashout),
@@ -81,23 +80,21 @@ export function checkIntegrity(
 }
 
 // ─── Settle-Up Algorithm ──────────────────────────────────────────────────────
-// Minimal number of transactions to settle debts between players.
-// Uses a greedy approach: pair the biggest creditor with the biggest debtor.
 
 export interface Settlement {
-  from: Player; // owes chips
-  to: Player;   // is owed chips
+  from: Player;
+  to: Player;
   chips: number;
   rupees: number;
 }
 
+// chipRatio: ₹ per chip  (money = chips * chipRatio)
 export function computeSettlements(
   playerBalances: PlayerBalance[],
-  chipsPerRupee: number
+  chipRatio: number
 ): Settlement[] {
   const settlements: Settlement[] = [];
 
-  // Separate winners (positive net) and losers (negative net)
   const creditors = playerBalances
     .filter((pb) => pb.netChips > 0)
     .map((pb) => ({ player: pb.player, chips: pb.netChips }))
@@ -121,7 +118,7 @@ export function computeSettlements(
         from: debtor.player,
         to: creditor.player,
         chips: amount,
-        rupees: amount / chipsPerRupee,
+        rupees: amount * chipRatio,  // money = chips * ratio
       });
     }
 
@@ -133,4 +130,41 @@ export function computeSettlements(
   }
 
   return settlements;
+}
+
+// ─── Chart Data ───────────────────────────────────────────────────────────────
+
+export interface ChartPoint {
+  time: string;
+  [key: string]: number | string;
+}
+
+export function computeChartData(
+  players: Player[],
+  transactions: Transaction[]
+): ChartPoint[] {
+  if (transactions.length === 0) return [];
+
+  const sorted = [...transactions].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+
+  const balances: Record<string, number> = {};
+  players.forEach((p) => { balances[p.id] = 0; });
+
+  // Start point: everyone at 0
+  const initial: ChartPoint = { time: "Start" };
+  players.forEach((p) => { initial[p.name] = 0; });
+  const points: ChartPoint[] = [initial];
+
+  sorted.forEach((tx) => {
+    const delta = tx.type === "cashout" ? Number(tx.chips) : -Number(tx.chips);
+    balances[tx.player_id] = (balances[tx.player_id] ?? 0) + delta;
+
+    const point: ChartPoint = { time: formatTime(tx.created_at) };
+    players.forEach((p) => { point[p.name] = balances[p.id]; });
+    points.push(point);
+  });
+
+  return points;
 }

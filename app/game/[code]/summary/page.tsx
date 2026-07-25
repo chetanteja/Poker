@@ -78,7 +78,7 @@ export default function SummaryPage() {
       ``,
       ...sortedBalances.map((pb) => {
         const sign = pb.netChips >= 0 ? "+" : "";
-        const rupees = pb.netChips / game!.chips_per_rupee;
+        const rupees = pb.netChips * game!.chips_per_rupee;
         return `${pb.player.name}: ${sign}${formatChips(pb.netChips)} chips (${sign}₹${Math.abs(rupees).toFixed(0)})`;
       }),
       ``,
@@ -234,7 +234,7 @@ function PlayerResultRow({
   const { player, netChips, totalBuyins, totalCashouts } = pb;
   const isWinner = netChips > 0;
   const isLoser = netChips < 0;
-  const rupees = netChips / chipsPerRupee;
+  const rupees = netChips * chipsPerRupee;
 
   return (
     <div
@@ -268,7 +268,7 @@ function PlayerResultRow({
           {isWinner ? <TrendingUp className="w-4 h-4" /> : isLoser ? <TrendingDown className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
           {netChips >= 0 ? "+" : ""}{formatChips(netChips)}
         </div>
-        {chipsPerRupee !== 1 && (
+        {chipsPerRupee !== 0 && (
           <p className={cn("text-xs", isWinner ? "text-emerald-600" : isLoser ? "text-red-600" : "text-zinc-600")}>
             {rupees >= 0 ? "+" : ""}₹{Math.abs(rupees).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
           </p>
@@ -308,7 +308,7 @@ function SettlementRow({
       </div>
       <div className="text-right">
         <p className="font-bold text-white">{formatRupees(s.rupees)}</p>
-        {chipsPerRupee !== 1 && (
+        {chipsPerRupee !== 0 && (
           <p className="text-xs text-zinc-500">{formatChips(s.chips)} chips</p>
         )}
       </div>
