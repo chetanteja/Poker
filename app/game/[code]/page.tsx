@@ -82,6 +82,9 @@ export default function GamePage() {
   const [txNote, setTxNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
+  // useRef is the synchronous guard — checked/set before any await, so rapid
+  // second clicks are blocked even before React re-renders the disabled state.
+  const inFlightRef = useRef<Set<string>>(new Set());
   const [inFlightIds, setInFlightIds] = useState<Set<string>>(new Set());
 
   // ─── Identity ───────────────────────────────────────────────────────────────
@@ -246,24 +249,33 @@ export default function GamePage() {
   }
 
   async function handleApprove(pt: PendingTransaction) {
-    if (inFlightIds.has(pt.id)) return;
+    // Ref check is synchronous — blocks a second click even before re-render
+    if (inFlightRef.current.has(pt.id)) return;
     if (pt.type === "cashout" && Number(pt.chips) > integrity.chipsOnTable) {
       alert(`Cannot approve: only ${formatChips(integrity.chipsOnTable)} chips remain on the table.`);
       return;
     }
-    setInFlightIds((prev) => new Set(prev).add(pt.id));
+    inFlightRef.current.add(pt.id);
+    setInFlightIds(new Set(inFlightRef.current)); // trigger re-render for disabled UI
     try {
       await approvePendingTransaction(pt.id, pt.game_id, pt.player_id, pt.type, pt.chips, pt.note);
     } catch { /* noop */ }
-    finally { setInFlightIds((prev) => { const s = new Set(prev); s.delete(pt.id); return s; }); }
+    finally {
+      inFlightRef.current.delete(pt.id);
+      setInFlightIds(new Set(inFlightRef.current));
+    }
   }
 
   async function handleDeny(pt: PendingTransaction) {
-    if (inFlightIds.has(pt.id)) return;
-    setInFlightIds((prev) => new Set(prev).add(pt.id));
+    if (inFlightRef.current.has(pt.id)) return;
+    inFlightRef.current.add(pt.id);
+    setInFlightIds(new Set(inFlightRef.current));
     try { await denyPendingTransaction(pt.id); }
     catch { /* noop */ }
-    finally { setInFlightIds((prev) => { const s = new Set(prev); s.delete(pt.id); return s; }); }
+    finally {
+      inFlightRef.current.delete(pt.id);
+      setInFlightIds(new Set(inFlightRef.current));
+    }
   }
 
   async function handleDeleteTransaction(txId: string) {
