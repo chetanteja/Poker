@@ -82,6 +82,7 @@ export default function GamePage() {
   const [txNote, setTxNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
+  const [inFlightIds, setInFlightIds] = useState<Set<string>>(new Set());
 
   // ─── Identity ───────────────────────────────────────────────────────────────
 
@@ -225,19 +226,17 @@ export default function GamePage() {
       const chips = parseInt(txChips, 10);
       if (isNaN(chips) || chips <= 0) throw new Error("Enter a valid chip amount");
 
-      // Cashout cannot exceed chips currently on the table
-      if (txType === "cashout") {
-        if (chips > integrity.chipsOnTable) {
-          throw new Error(
-            `Only ${formatChips(integrity.chipsOnTable)} chips are on the table right now.`
-          );
-        }
+      if (txType === "cashout" && chips > integrity.chipsOnTable) {
+        throw new Error(
+          `Only ${formatChips(integrity.chipsOnTable)} chips are on the table right now.`
+        );
       }
 
-      const isOwnAction = currentPlayerId === txPlayer.id;
-      if (isOwnAction) {
+      if (role === "admin") {
+        // Admin always logs directly, for any player
         await addTransaction(game.id, txPlayer.id, txType, chips, txNote || undefined);
       } else {
+        // Player submits a request; admin will approve/deny
         await createPendingTransaction(game.id, txPlayer.id, txType, chips, txNote || undefined);
       }
       setTxModalOpen(false);
@@ -247,16 +246,24 @@ export default function GamePage() {
   }
 
   async function handleApprove(pt: PendingTransaction) {
-    // Re-validate on approve too
+    if (inFlightIds.has(pt.id)) return;
     if (pt.type === "cashout" && Number(pt.chips) > integrity.chipsOnTable) {
-      return; // silently block; admin will need to correct
+      alert(`Cannot approve: only ${formatChips(integrity.chipsOnTable)} chips remain on the table.`);
+      return;
     }
-    try { await approvePendingTransaction(pt.id, pt.game_id, pt.player_id, pt.type, pt.chips, pt.note); }
-    catch { /* noop */ }
+    setInFlightIds((prev) => new Set(prev).add(pt.id));
+    try {
+      await approvePendingTransaction(pt.id, pt.game_id, pt.player_id, pt.type, pt.chips, pt.note);
+    } catch { /* noop */ }
+    finally { setInFlightIds((prev) => { const s = new Set(prev); s.delete(pt.id); return s; }); }
   }
 
   async function handleDeny(pt: PendingTransaction) {
-    try { await denyPendingTransaction(pt.id); } catch { /* noop */ }
+    if (inFlightIds.has(pt.id)) return;
+    setInFlightIds((prev) => new Set(prev).add(pt.id));
+    try { await denyPendingTransaction(pt.id); }
+    catch { /* noop */ }
+    finally { setInFlightIds((prev) => { const s = new Set(prev); s.delete(pt.id); return s; }); }
   }
 
   async function handleDeleteTransaction(txId: string) {
@@ -420,50 +427,62 @@ export default function GamePage() {
         </div>
       )}
 
-      {/* Pending approval banner (for players) */}
-      {myPendingTxns.length > 0 && (
-        <div className="mx-3 mt-2 bg-amber-950/60 border border-amber-700/40 rounded-2xl px-4 py-3 space-y-2">
+      {/* Player: show their own pending requests (read-only, waiting for admin) */}
+      {role === "player" && myPendingTxns.length > 0 && (
+        <div className="mx-3 mt-2 bg-amber-950/40 border border-amber-700/30 rounded-2xl px-4 py-3 space-y-2">
           <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
-            Action needs your approval
+            Waiting for admin approval
           </p>
           {myPendingTxns.map((pt) => (
             <div key={pt.id} className="flex items-center justify-between gap-3">
-              <p className="text-sm text-white">
+              <p className="text-sm text-white/80">
                 <span className={cn("font-semibold", pt.type === "buyin" ? "text-red-400" : "text-emerald-400")}>
                   {pt.type === "buyin" ? "Buyin" : "Cashout"}
                 </span>{" "}
-                of <span className="font-semibold">{formatChips(Number(pt.chips))} chips</span>
+                {formatChips(Number(pt.chips))} chips
                 {pt.note && <span className="text-zinc-400"> · {pt.note}</span>}
               </p>
-              <div className="flex gap-1.5 shrink-0">
-                <Button size="sm" className="h-7 px-3 text-xs bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApprove(pt)}>
-                  <Check className="w-3.5 h-3.5 mr-1" /> Accept
-                </Button>
-                <Button size="sm" variant="outline" className="h-7 px-3 text-xs" onClick={() => handleDeny(pt)}>
-                  <XIcon className="w-3.5 h-3.5 mr-1" /> Deny
-                </Button>
-              </div>
+              <span className="text-xs text-amber-400/60 italic shrink-0">pending…</span>
             </div>
           ))}
         </div>
       )}
 
-      {/* Admin: pending sent to others */}
-      {role === "admin" && pendingTxns.filter((pt) => pt.player_id !== currentPlayerId).length > 0 && (
-        <div className="mx-3 mt-2 bg-black/20 border border-white/10 rounded-2xl px-4 py-3 space-y-1.5">
-          <p className="text-xs font-semibold text-white/40 uppercase tracking-wider">Waiting for approval</p>
-          {pendingTxns.filter((pt) => pt.player_id !== currentPlayerId).map((pt) => (
-            <div key={pt.id} className="flex items-center justify-between text-sm">
-              <p className="text-white/70">
-                <span className="text-white font-medium">{pt.player?.name}</span> — {" "}
-                <span className={pt.type === "buyin" ? "text-red-400" : "text-emerald-400"}>
-                  {pt.type === "buyin" ? "Buyin" : "Cashout"}
-                </span>{" "}
-                {formatChips(Number(pt.chips))} chips
-              </p>
-              <span className="text-xs text-white/30 italic">pending…</span>
-            </div>
-          ))}
+      {/* Admin: player requests awaiting approval */}
+      {role === "admin" && pendingTxns.length > 0 && (
+        <div className="mx-3 mt-2 bg-amber-950/60 border border-amber-700/40 rounded-2xl px-4 py-3 space-y-2">
+          <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
+            Requests awaiting your approval
+          </p>
+          {pendingTxns.map((pt) => {
+            const busy = inFlightIds.has(pt.id);
+            return (
+              <div key={pt.id} className="flex items-center justify-between gap-3">
+                <p className="text-sm text-white/90 min-w-0">
+                  <span className="font-semibold text-white">{pt.player?.name}</span>{" — "}
+                  <span className={cn("font-medium", pt.type === "buyin" ? "text-red-400" : "text-emerald-400")}>
+                    {pt.type === "buyin" ? "Buyin" : "Cashout"}
+                  </span>{" "}
+                  {formatChips(Number(pt.chips))} chips
+                  {pt.note && <span className="text-zinc-400 text-xs"> · {pt.note}</span>}
+                </p>
+                <div className="flex gap-1.5 shrink-0">
+                  <Button size="sm"
+                    className="h-7 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => handleApprove(pt)}>
+                    {busy ? "…" : <><Check className="w-3.5 h-3.5 mr-1" />Approve</>}
+                  </Button>
+                  <Button size="sm" variant="outline"
+                    className="h-7 px-3 text-xs disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => handleDeny(pt)}>
+                    {busy ? "…" : <><XIcon className="w-3.5 h-3.5 mr-1" />Deny</>}
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -541,8 +560,8 @@ export default function GamePage() {
               {txType === "buyin" ? "Buy In" : "Cash Out"} — {txPlayer?.name}
             </DialogTitle>
             <DialogDescription>
-              {txPlayer && currentPlayerId !== txPlayer.id
-                ? `${txPlayer.name} will get a notification to approve this.`
+              {role === "player"
+                ? "Your request will be sent to the admin for approval."
                 : txType === "buyin" ? "Log chips purchased from the dealer." : "Log chips returned to the dealer."}
               {txType === "cashout" && integrity.chipsOnTable > 0 && (
                 <span className="block mt-1 text-emerald-400/70">
@@ -567,9 +586,11 @@ export default function GamePage() {
               <Button type="submit" className="flex-1"
                 style={{ backgroundColor: txType === "buyin" ? "#dc2626" : "#059669" }}
                 disabled={submitting}>
-                {submitting ? "Logging…"
-                  : txPlayer && currentPlayerId !== txPlayer.id ? "Send for Approval"
-                  : txType === "buyin" ? "Log Buyin" : "Log Cashout"}
+                {submitting
+                  ? (role === "player" ? "Sending…" : "Logging…")
+                  : role === "player"
+                    ? "Send Request"
+                    : txType === "buyin" ? "Log Buyin" : "Log Cashout"}
               </Button>
             </div>
           </form>
@@ -723,24 +744,16 @@ function PlayerCard({ pb, suit, chipsPerRupee, isAdmin, isOwnCard, gameActive, o
           </div>
         </div>
 
-        {/* Action buttons (admin only) */}
-        {isAdmin && gameActive && (
+        {/* Action buttons: admin on any card (direct), player on own card (request) */}
+        {(isAdmin || isOwnCard) && gameActive && (
           <div className="flex gap-2 mt-3">
             <button onClick={onBuyin}
-              className={cn(
-                "flex-1 py-2 rounded-xl text-xs font-semibold text-white transition-all active:scale-95",
-                "bg-red-500 hover:bg-red-600 shadow-sm",
-                !isOwnCard && "opacity-90"
-              )}>
-              Buyin {!isOwnCard && "↗"}
+              className="flex-1 py-2 rounded-xl text-xs font-semibold text-white transition-all active:scale-95 bg-red-500 hover:bg-red-600 shadow-sm">
+              {isAdmin ? "Buyin" : "Request Buyin"}
             </button>
             <button onClick={onCashout}
-              className={cn(
-                "flex-1 py-2 rounded-xl text-xs font-semibold text-white transition-all active:scale-95",
-                "bg-emerald-500 hover:bg-emerald-600 shadow-sm",
-                !isOwnCard && "opacity-90"
-              )}>
-              Cashout {!isOwnCard && "↗"}
+              className="flex-1 py-2 rounded-xl text-xs font-semibold text-white transition-all active:scale-95 bg-emerald-500 hover:bg-emerald-600 shadow-sm">
+              {isAdmin ? "Cashout" : "Request Cashout"}
             </button>
           </div>
         )}
